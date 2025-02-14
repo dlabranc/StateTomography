@@ -93,7 +93,7 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
         # Compute predicted probabilities p_i = Tr(ρ Π_i)
         p = np.array([np.trace(rho @ Pi).real for Pi in povm_list])
         # Avoid division by zero – add a tiny number if necessary.
-        p = np.maximum(p, 1e-12)
+        # p = np.maximum(p, 1e-12)
         # Construct the operator R = Σ_i (f_i/p_i) Π_i
         R = np.zeros((d, d), dtype=complex)
         for fi, pi, Pi in zip(frequencies, p, povm_list):
