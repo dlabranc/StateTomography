@@ -1,38 +1,38 @@
 import numpy as np
 from math import factorial, comb, sqrt
 import sympy as sp
-from joblib import Parallel, delayed
+# from joblib import Parallel, delayed
 
-def compute_contribution(measurement, n, m):
-    return (np.conjugate(measurement) ** n) * (measurement ** m)
+# def compute_contribution(measurement, n, m):
+#     return (np.conjugate(measurement) ** n) * (measurement ** m)
 
-def calculate_moments_parallel(S_measurements, max_order, n_jobs=-1):
-    """
-    Calculate moments in parallel from S_measurements using joblib.
+# def calculate_moments_parallel(S_measurements, max_order, n_jobs=-1):
+#     """
+#     Calculate moments in parallel from S_measurements using joblib.
     
-    Parameters:
-      S_measurements (np.ndarray): Array of complex S measurements.
-      max_order (int): Maximum order of moments to calculate.
-      n_jobs (int): Number of parallel jobs (default: -1 uses all available cores).
+#     Parameters:
+#       S_measurements (np.ndarray): Array of complex S measurements.
+#       max_order (int): Maximum order of moments to calculate.
+#       n_jobs (int): Number of parallel jobs (default: -1 uses all available cores).
       
-    Returns:
-      np.ndarray: Array of moments with shape (max_order+1, max_order+1).
-    """
-    num_samples = len(S_measurements)
-    moments = np.zeros((max_order + 1, max_order + 1), dtype=complex)
+#     Returns:
+#       np.ndarray: Array of moments with shape (max_order+1, max_order+1).
+#     """
+#     num_samples = len(S_measurements)
+#     moments = np.zeros((max_order + 1, max_order + 1), dtype=complex)
     
-    for n in range(max_order + 1):
-        for m in range(max_order + 1):
-            # Parallelize the sum over measurements for each (n, m)
-            contributions = Parallel(n_jobs=n_jobs)(
-                delayed(compute_contribution)(measurement, n, m)
-                for measurement in S_measurements
-            )
-            moment_sum = np.sum(contributions)
-            moments[n, m] = moment_sum / num_samples
-            print(f'\rCalculated moment ({n},{m})', end='')
-    print()  # Newline after progress output
-    return moments
+#     for n in range(max_order + 1):
+#         for m in range(max_order + 1):
+#             # Parallelize the sum over measurements for each (n, m)
+#             contributions = Parallel(n_jobs=n_jobs)(
+#                 delayed(compute_contribution)(measurement, n, m)
+#                 for measurement in S_measurements
+#             )
+#             moment_sum = np.sum(contributions)
+#             moments[n, m] = moment_sum / num_samples
+#             print(f'\rCalculated moment ({n},{m})', end='')
+#     print()  # Newline after progress output
+#     return moments
 
 def calculate_moments(S_measurements, max_order):
     """
