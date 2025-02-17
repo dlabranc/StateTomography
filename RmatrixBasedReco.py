@@ -62,7 +62,7 @@ def bin_midpoints_2d(xedges, yedges):
     X, Y = np.meshgrid(x_mid, y_mid, indexing='ij')
     return X, Y
 
-def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1, dilution=None,
+def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1, useG=False, dilution=None,
                            improvement_tol=1e-8, patience=10, track_likelihood=False):
     """
     Perform iterative RρR reconstruction with an additional convergence check for negligible improvement.
@@ -124,13 +124,26 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
             R += (fi / pi) * Pi
 
         # Update: ρ_new = R ρ R / Tr(R ρ R)
-        if dilution:
+
+        # If useG is True, perform the update with G instead of R.
+        if useG:
+            if dilution:
             # If dilution is provided, perform a diluted update.
-            update_left = (np.eye(d) + dilution * invG @ R) / (1 + dilution)
-            update_right = (np.eye(d) + dilution * R @ invG) / (1 + dilution)
-            rho_new = update_left @ rho @ update_right
+                update_left = (np.eye(d) + dilution * invG @ R) / (1 + dilution)
+                update_right = (np.eye(d) + dilution * R @ invG) / (1 + dilution)
+                rho_new = update_left @ rho @ update_right
+            else:
+                rho_new = invG @ R @ rho @ R @ invG
         else:
-            rho_new = invG @ R @ rho @ R @ invG
+            if dilution:
+            # If dilution is provided, perform a diluted update.
+                update_left = (np.eye(d) + dilution *  R) / (1 + dilution)
+                update_right = (np.eye(d) + dilution * R) / (1 + dilution)
+                rho_new = update_left @ rho @ update_right
+            else:
+                rho_new = R @ rho @ R 
+
+        
 
         rho_new = rho_new / np.trace(rho_new)
         
