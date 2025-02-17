@@ -107,6 +107,44 @@ def calculate_moments_uncertainty(S_measurements, max_order):
     print()
     return moments, uncertainties
 
+def calculate_moments_uncertainty_vectorized(S_measurements, max_order):
+    """
+    Vectorized calculation of moments of S from the given measurements and their standard deviations.
+
+    Parameters:
+      S_measurements (np.ndarray): Array of S measurements (shape: num_samples,).
+      max_order (int): The maximum order of moments to calculate.
+
+    Returns:
+      moments (np.ndarray): Array of moments of shape (max_order+1, max_order+1).
+      uncertainties (np.ndarray): Array of standard deviations for each moment (same shape).
+    """
+    num_samples = S_measurements.shape[0]
+    M = max_order + 1
+    # Create an array of exponents [0, 1, ..., max_order]
+    exponents = np.arange(M)
+    # Compute S_measurements raised to each power:
+    # X_powers has shape (num_samples, M) where X_powers[i, m] = (S_measurements[i])^m.
+    X_powers = S_measurements[:, np.newaxis] ** exponents  
+    # Similarly for the complex conjugate.
+    conjX_powers = np.conjugate(S_measurements)[:, np.newaxis] ** exponents  
+    
+    # For each measurement i, compute the outer product to get the (n,m) moment sample:
+    # moment_samples has shape (num_samples, M, M) with element:
+    # moment_samples[i, n, m] = conjX_powers[i, n] * X_powers[i, m].
+    moment_samples = conjX_powers[:, :, np.newaxis] * X_powers[:, np.newaxis, :]  # shape: (num_samples, M, M)
+    
+    # Compute the mean moments over all measurements:
+    mean_moments = np.mean(moment_samples, axis=0)  # shape: (M, M)
+    # As in the original code, we take the absolute value of the mean moment.
+    moments = np.abs(mean_moments)
+    
+    # Compute the uncertainty (standard deviation) for each moment:
+    # For each (n,m), compute the standard deviation of moment_samples[:, n, m].
+    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))
+    
+    return moments, uncertainties
+
 def extract_a_moments_uncertainty(S_moments, S_uncertainties, h_moments, max_order, num_samples=100):
     """
     Propagate uncertainties from S_moments to the extracted signal moments a_moments
@@ -201,6 +239,101 @@ def extract_a_moments_uncertainty_parallel(S_moments, S_uncertainties, h_moments
     a_std = np.std(samples, axis=0)
     return a_mean, a_std
 
+def build_extraction_matrix(h_moments, max_order):
+    """
+    Build the linear matrix A that relates the unknown signal moments a_moments
+    to the measured moments S_moments via:
+    
+      S(n,m) = sum_{i=0}^{n} sum_{j=0}^{m} binom(n,i)*binom(m,j)* a(i,j)* h(n-i, m-j)
+    
+    Parameters:
+      h_moments (dict): Noise moments with keys (n, m) for n,m = 0,...,max_order.
+      max_order (int): Maximum order (so M = max_order+1).
+      
+    Returns:
+      A (np.ndarray): A matrix of shape (M², M²) such that y = A x,
+                      where x and y are the flattened versions of a_moments and S_moments.
+    """
+    M = max_order + 1
+    A = np.zeros((M*M, M*M))
+    # Row corresponds to equation for S(n,m), column to unknown a(i,j)
+    for n in range(M):
+        for m in range(M):
+            row = n * M + m
+            for i in range(M):
+                for j in range(M):
+                    col = i * M + j
+                    if i <= n and j <= m:
+                        A[row, col] = comb(n, i) * comb(m, j) * h_moments[n-i, m-j]
+                    else:
+                        A[row, col] = 0.0
+    return A
+
+def vectorized_extract_a_moments(S_samples, h_moments, max_order):
+    """
+    Vectorized extraction of signal moments from measured moments.
+    
+    For each measured S_moments sample (of shape (max_order+1, max_order+1)),
+    we assume a linear relation y = A x where x are the unknown signal moments
+    (flattened) and y are the measured moments (flattened). We precompute A's pseudoinverse
+    and then apply it to all samples.
+    
+    Parameters:
+      S_samples (np.ndarray): Array of shape (num_samples, M, M) of measured moments.
+      h_moments (dict): Dictionary of noise moments for keys (n, m) with 0 ≤ n,m ≤ max_order.
+      max_order (int): Maximum order (M = max_order+1).
+      
+    Returns:
+      a_samples (np.ndarray): Extracted signal moments for each sample, of shape (num_samples, M, M).
+    """
+    num_samples, M, M2 = S_samples.shape
+    if M != (max_order+1) or M2 != (max_order+1):
+        raise ValueError("S_samples shape does not match max_order")
+        
+    # Build extraction matrix A and compute its pseudoinverse
+    A = build_extraction_matrix(h_moments, max_order)
+    A_pinv = np.linalg.pinv(A)
+    
+    # Reshape S_samples to (num_samples, M²)
+    S_flat = S_samples.reshape(num_samples, -1)
+    # For each sample, compute a_vec = A_pinv @ S_flat (vectorized over samples)
+    a_flat = S_flat.dot(A_pinv.T)  # shape: (num_samples, M²)
+    # Reshape each sample back to (M, M)
+    a_samples = a_flat.reshape(num_samples, M, M)
+    return a_samples
+
+def extract_a_moments_uncertainty_vectorized(S_moments, S_uncertainties, h_moments, max_order, num_samples=100):
+    """
+    Propagate uncertainties from S_moments to extracted signal moments a_moments
+    using a fully vectorized Monte Carlo sampling approach with NumPy.
+    
+    For each Monte Carlo sample, we generate a new S_moments_sample by sampling each
+    element from a Gaussian with the given mean and uncertainty, then we extract a_moments
+    via the linear inversion, vectorized over all samples.
+    
+    Parameters:
+      S_moments (np.ndarray): Measured moments, shape (max_order+1, max_order+1).
+      S_uncertainties (np.ndarray): Uncertainties (std dev), same shape.
+      h_moments (dict): Dictionary of noise moments.
+      max_order (int): Maximum order considered.
+      num_samples (int): Number of Monte Carlo samples.
+      
+    Returns:
+      a_mean (np.ndarray): Mean extracted signal moments, shape (max_order+1, max_order+1).
+      a_std (np.ndarray): Standard deviation of extracted signal moments, same shape.
+    """
+    # Vectorized sampling: generate an array of shape (num_samples, M, M)
+    M = max_order + 1
+    S_samples = np.random.normal(loc=S_moments.real, scale=S_uncertainties.real, 
+                                  size=(num_samples, M, M))
+    
+    # Vectorized extraction for all samples
+    a_samples = vectorized_extract_a_moments(S_samples, h_moments, max_order)
+    
+    # Compute mean and std deviation over the sample axis
+    a_mean = np.mean(a_samples, axis=0)
+    a_std = np.std(a_samples, axis=0)
+    return a_mean, a_std
 
 def annihilation_operator(N):
     """Creates the annihilation operator a in a Fock space of dimension N."""
@@ -351,3 +484,34 @@ def g2_from_moments(moments):
     if n_avg == 0:
         return 0.0
     return moment_22 / (n_avg ** 2)
+
+
+def g2_from_moments_with_uncertainty(moments, uncertainties):
+    """
+    Calculate the second-order correlation g^(2)(0) and its uncertainty from measured
+    normally-ordered moments.
+
+    We define:
+        g^(2)(0) = <(a†)^2 a^2> / (<a† a>)^2
+    and propagate uncertainty via:
+        δg₂ = sqrt[ (δM22/(M11)^2)^2 + (2*M22*δM11/(M11)^3)^2 ],
+    where M11 = moments[1,1], M22 = moments[2,2],
+    δM11 = uncertainties[1,1] and δM22 = uncertainties[2,2].
+
+    Parameters:
+      moments (np.ndarray): Array of moments (e.g. with indices (n, m)).
+      uncertainties (np.ndarray): Array of uncertainties for the moments (same shape).
+
+    Returns:
+      tuple: (g2, uncertainty) where g2 is the calculated second-order correlation and
+             uncertainty is the propagated error.
+    """
+    M11 = moments[1,1]
+    M22 = moments[2,2]
+    if M11 == 0:
+        return 0.0, 0.0
+    delta_M11 = uncertainties[1,1]
+    delta_M22 = uncertainties[2,2]
+    g2 = M22 / (M11**2)
+    delta_g2 = np.sqrt((delta_M22/(M11**2))**2 + (2 * M22 * delta_M11/(M11**3))**2)
+    return g2, delta_g2
