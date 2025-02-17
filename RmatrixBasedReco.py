@@ -62,22 +62,32 @@ def bin_midpoints_2d(xedges, yedges):
     X, Y = np.meshgrid(x_mid, y_mid, indexing='ij')
     return X, Y
 
-def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1, dilution=None):
+def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1, dilution=None,
+                           improvement_tol=1e-8, patience=10, track_likelihood=False):
     """
-    Perform iterative RρR reconstruction.
-    
+    Perform iterative RρR reconstruction with an additional convergence check for negligible improvement.
+
+    The likelihood for a given state ρ is defined as
+        L = ∏_i [Tr(ρ Π_i)]^(f_i)
+    so that the log-likelihood becomes
+        logL = ∑_i f_i * log(Tr(ρ Π_i)),
+    where f_i are the relative frequencies and Π_i the POVM elements.
+
     Args:
         povm_list: list of numpy arrays representing the POVM elements Π_i.
         counts: list or array of measured absolute frequencies N_i (should sum to N_counts).
         init_rho: initial guess for the density matrix (if None, use maximally mixed state).
         max_iter: maximum number of iterations.
-        tol: convergence tolerance respect to the value of the maximum eigenvalue of R. # See Scott Glancy's paper
+        tol: convergence tolerance with respect to the value of the maximum eigenvalue of R (see Scott Glancy's paper).
+        dilution: if provided, applies a dilution step in the update.
+        improvement_tol: tolerance for the change in the convergence metric (|maxEig(R)-1|) between iterations.
+        patience: number of consecutive iterations with negligible improvement to allow before stopping.
     
     Returns:
         rho: the reconstructed density matrix.
     """
 
-    frequencies = counts/np.sum(counts)
+    frequencies = counts / np.sum(counts)
     # Determine Hilbert space dimension from first POVM element.
     d = povm_list[0].shape[0]
 
@@ -88,12 +98,26 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
     else:
         rho = init_rho.copy()
     
+    # Initialize variables for additional convergence check
+    prev_metric = None
+    no_improvement_count = 0
+    likelihood_history = [] if track_likelihood else None
+    r_eigenvalue_history = [] if track_likelihood else None
+
     for iteration in range(max_iter):
         
         # Compute predicted probabilities p_i = Tr(ρ Π_i)
         p = np.array([np.trace(rho @ Pi).real for Pi in povm_list])
         # Avoid division by zero – add a tiny number if necessary.
         p = np.maximum(p, 1e-12)
+
+        # Compute and record the log-likelihood: logL = Σ_i N_i * log(p_i)
+        if track_likelihood:
+            logL = np.sum(counts/np.sum(counts) * np.log(p))
+            likelihood_history.append(logL)
+        else:
+            logL = 0  # not used if tracking is disabled
+        
         # Construct the operator R = Σ_i (f_i/p_i) Π_i
         R = np.zeros((d, d), dtype=complex)
         for fi, pi, Pi in zip(frequencies, p, povm_list):
@@ -101,25 +125,58 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
 
         # Update: ρ_new = R ρ R / Tr(R ρ R)
         if dilution:
-            rho_new = (np.eye(d) + dilution*invG @ R)/(1 + dilution) @ rho @ (np.eye(d) + dilution* R @ invG)/(1 + dilution) 
+            # If dilution is provided, perform a diluted update.
+            update_left = (np.eye(d) + dilution * invG @ R) / (1 + dilution)
+            update_right = (np.eye(d) + dilution * R @ invG) / (1 + dilution)
+            rho_new = update_left @ rho @ update_right
         else:
             rho_new = invG @ R @ rho @ R @ invG
+
         rho_new = rho_new / np.trace(rho_new)
+        
         # Calculate maximum eigenvalue of R
         maxEigR = np.max(np.linalg.eigvals(R))
-
-        rk = np.sqrt((len(povm_list)**2 - 1)/2)/np.sum(counts)
+        if track_likelihood:
+            r_eigenvalue_history.append(maxEigR)
         
+        # Define the convergence metric
+        current_metric = np.abs(maxEigR - 1)
+        rk = np.sqrt((len(povm_list)**2 - 1) / 2) / np.sum(counts)
         
-        print(f'Iteration: {iteration}/{max_iter} Percentage: {tol*rk*100/np.abs(maxEigR-1):.2f}% |maxEig(R)-1|: {np.abs(maxEigR-1):.2e} > {tol*rk:.2e}', end='\r')
+        print(f'Iteration: {iteration}/{max_iter} | '
+              f'Percentage: {tol * rk * 100 / current_metric:.2f}% | '
+              f'|maxEig(R)-1|: {current_metric:.2e} > {tol * rk:.2e} | '
+              f'Log-Likelihood: {logL:.4f}', end='\r')
+        
         # Check convergence over maxEigR
-        if np.abs(maxEigR-1) < tol*rk:
+        if current_metric < tol * rk:
             print()
-            print(f'Converged in {iteration+1} iterations.')
+            print(f'Converged in {iteration + 1} iterations (|maxEig(R)-1| = {current_metric:.2e}).')
+            if track_likelihood:
+                return rho_new, likelihood_history, r_eigenvalue_history
             return rho_new
+
+        # Additional convergence check: if the improvement is negligible over several iterations, stop.
+        if prev_metric is not None:
+            if np.abs(current_metric - prev_metric) < improvement_tol:
+                no_improvement_count += 1
+            else:
+                no_improvement_count = 0
+        prev_metric = current_metric
+
+        if no_improvement_count >= patience:
+            print()
+            print(f'No significant improvement in the last {patience} iterations. Stopping iterations.')
+            if track_likelihood:
+                return rho_new, likelihood_history, r_eigenvalue_history
+            return rho_new
+        
         rho = rho_new
+
     print()
     print('Maximum iterations reached without full convergence.')
+    if track_likelihood:
+        return rho_new, likelihood_history, r_eigenvalue_history
     return rho
 
 def coherent_state_vector(alpha, d):
