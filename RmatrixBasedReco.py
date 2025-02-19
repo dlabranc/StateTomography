@@ -1,6 +1,7 @@
 import numpy as np
 import math
 from scipy.special import factorial, eval_genlaguerre
+import qutip as qt
 
 def prepare_histograms(measurements, nbins):
     """
@@ -63,7 +64,7 @@ def bin_midpoints_2d(xedges, yedges):
     return X, Y
 
 def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1, useG=False, dilution=None,
-                           improvement_tol=1e-8, patience=10, track_likelihood=False):
+                           improvement_tol=1e-8, patience=10, track_likelihood=False, rho_exact=None):
     """
     Perform iterative RρR reconstruction with an additional convergence check for negligible improvement.
 
@@ -103,6 +104,7 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
     no_improvement_count = 0
     likelihood_history = [] if track_likelihood else None
     r_eigenvalue_history = [] if track_likelihood else None
+    fidelity_history = [] if track_likelihood else None
 
     for iteration in range(max_iter):
         
@@ -146,11 +148,16 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
         
 
         rho_new = rho_new / np.trace(rho_new)
-        
+        if rho_exact is not None:
+            step_fidelity = qt.fidelity(qt.Qobj(rho_new), qt.Qobj(rho_exact))**2
+        else:
+            step_fidelity = None
         # Calculate maximum eigenvalue of R
         maxEigR = np.max(np.linalg.eigvals(R))
         if track_likelihood:
             r_eigenvalue_history.append(maxEigR)
+            if rho_exact is not None:
+                fidelity_history.append(step_fidelity)
         
         # Define the convergence metric
         current_metric = np.abs(maxEigR - 1)
@@ -159,14 +166,15 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
         print(f'Iteration: {iteration}/{max_iter} | '
               f'Percentage: {tol * rk * 100 / current_metric:.2f}% | '
               f'|maxEig(R)-1|: {current_metric:.2e} > {tol * rk:.2e} | '
-              f'Log-Likelihood: {logL:.4f}', end='\r')
+              f'Log-Likelihood: {logL:.4f} | '
+              f'Fidelity: {step_fidelity*100:.2f}%', end='\r')
         
         # Check convergence over maxEigR
         if current_metric < tol * rk:
             print()
             print(f'Converged in {iteration + 1} iterations (|maxEig(R)-1| = {current_metric:.2e}).')
             if track_likelihood:
-                return rho_new, likelihood_history, r_eigenvalue_history
+                return rho_new, likelihood_history, r_eigenvalue_history, fidelity_history
             return rho_new
 
         # Additional convergence check: if the improvement is negligible over several iterations, stop.
@@ -181,7 +189,7 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
             print()
             print(f'No significant improvement in the last {patience} iterations. Stopping iterations.')
             if track_likelihood:
-                return rho_new, likelihood_history, r_eigenvalue_history
+                return rho_new, likelihood_history, r_eigenvalue_history, fidelity_history
             return rho_new
         
         rho = rho_new
@@ -189,7 +197,7 @@ def rhorho_reconstruction(povm_list, counts, init_rho=None, max_iter=1000, tol=1
     print()
     print('Maximum iterations reached without full convergence.')
     if track_likelihood:
-        return rho_new, likelihood_history, r_eigenvalue_history
+        return rho_new, likelihood_history, r_eigenvalue_history, fidelity_history
     return rho
 
 def coherent_state_vector(alpha, d):
