@@ -3,7 +3,12 @@ from math import factorial, comb, sqrt
 import sympy as sp
 import cvxpy as cvx
 from joblib import Parallel, delayed
-#  
+
+##########################
+#### Simple Functions ####
+##########################
+
+
 def calculate_moments(S_measurements, max_order):
     """
     Calculate the moments of S from the given measurements.
@@ -107,43 +112,11 @@ def calculate_moments_uncertainty(S_measurements, max_order):
     print()
     return moments, uncertainties
 
-def calculate_moments_uncertainty_vectorized(S_measurements, max_order):
-    """
-    Vectorized calculation of moments of S from the given measurements and their standard deviations.
 
-    Parameters:
-      S_measurements (np.ndarray): Array of S measurements (shape: num_samples,).
-      max_order (int): The maximum order of moments to calculate.
 
-    Returns:
-      moments (np.ndarray): Array of moments of shape (max_order+1, max_order+1).
-      uncertainties (np.ndarray): Array of standard deviations for each moment (same shape).
-    """
-    num_samples = S_measurements.shape[0]
-    M = max_order + 1
-    # Create an array of exponents [0, 1, ..., max_order]
-    exponents = np.arange(M)
-    # Compute S_measurements raised to each power:
-    # X_powers has shape (num_samples, M) where X_powers[i, m] = (S_measurements[i])^m.
-    X_powers = S_measurements[:, np.newaxis] ** exponents  
-    # Similarly for the complex conjugate.
-    conjX_powers = np.conjugate(S_measurements)[:, np.newaxis] ** exponents  
-    
-    # For each measurement i, compute the outer product to get the (n,m) moment sample:
-    # moment_samples has shape (num_samples, M, M) with element:
-    # moment_samples[i, n, m] = conjX_powers[i, n] * X_powers[i, m].
-    moment_samples = conjX_powers[:, :, np.newaxis] * X_powers[:, np.newaxis, :]  # shape: (num_samples, M, M)
-    
-    # Compute the mean moments over all measurements:
-    mean_moments = np.mean(moment_samples, axis=0)  # shape: (M, M)
-    # As in the original code, we take the absolute value of the mean moment.
-    moments = np.abs(mean_moments)
-    
-    # Compute the uncertainty (standard deviation) for each moment:
-    # For each (n,m), compute the standard deviation of moment_samples[:, n, m].
-    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))/np.sqrt(num_samples) # shape: (M, M)
-    
-    return moments, uncertainties
+
+# Monte Carlo Sampling, also in Parallel (Not optimized, No CUDA)
+
 
 def extract_a_moments_uncertainty(S_moments, S_uncertainties, h_moments, max_order, num_samples=100):
     """
@@ -189,6 +162,7 @@ def extract_a_moments_uncertainty(S_moments, S_uncertainties, h_moments, max_ord
     a_std = np.std(samples, axis=0)
     return a_mean, a_std
 
+
 def sample_a_moments(S_moments, S_uncertainties, h_moments, max_order):
     """
     Generate one Monte Carlo sample of the extracted signal moments.
@@ -207,6 +181,8 @@ def sample_a_moments(S_moments, S_uncertainties, h_moments, max_order):
         print(f"Sample extraction failed: {e}")
         a_sample = np.zeros((max_order + 1, max_order + 1), dtype=complex)
     return a_sample
+
+
 
 def extract_a_moments_uncertainty_parallel(S_moments, S_uncertainties, h_moments, max_order, num_samples=100, n_jobs=-1):
     """
@@ -239,6 +215,51 @@ def extract_a_moments_uncertainty_parallel(S_moments, S_uncertainties, h_moments
     a_std = np.std(samples, axis=0)
     return a_mean, a_std
 
+##############################
+#### Vectorized Functions ####
+##############################
+
+
+def calculate_moments_uncertainty_vectorized(S_measurements, max_order):
+    """
+    Vectorized calculation of moments of S from the given measurements and their standard deviations.
+
+    Parameters:
+      S_measurements (np.ndarray): Array of S measurements (shape: num_samples,).
+      max_order (int): The maximum order of moments to calculate.
+
+    Returns:
+      moments (np.ndarray): Array of moments of shape (max_order+1, max_order+1).
+      uncertainties (np.ndarray): Array of standard deviations for each moment (same shape).
+    """
+    num_samples = S_measurements.shape[0]
+    M = max_order + 1
+    # Create an array of exponents [0, 1, ..., max_order]
+    exponents = np.arange(M)
+    # Compute S_measurements raised to each power:
+    # X_powers has shape (num_samples, M) where X_powers[i, m] = (S_measurements[i])^m.
+    X_powers = S_measurements[:, np.newaxis] ** exponents  
+    # Similarly for the complex conjugate.
+    conjX_powers = np.conjugate(S_measurements)[:, np.newaxis] ** exponents  
+    
+    # For each measurement i, compute the outer product to get the (n,m) moment sample:
+    # moment_samples has shape (num_samples, M, M) with element:
+    # moment_samples[i, n, m] = conjX_powers[i, n] * X_powers[i, m].
+    moment_samples = conjX_powers[:, :, np.newaxis] * X_powers[:, np.newaxis, :]  # shape: (num_samples, M, M)
+    
+    # Compute the mean moments over all measurements:
+    mean_moments = np.mean(moment_samples, axis=0)  # shape: (M, M)
+    # As in the original code, we take the absolute value of the mean moment.
+    moments = np.abs(mean_moments)
+    
+    # Compute the uncertainty (standard deviation) for each moment:
+    # For each (n,m), compute the standard deviation of moment_samples[:, n, m].
+    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))/np.sqrt(num_samples) # shape: (M, M)
+    
+    return moments, uncertainties
+
+
+
 def build_extraction_matrix(h_moments, max_order):
     """
     Build the linear matrix A that relates the unknown signal moments a_moments
@@ -269,7 +290,7 @@ def build_extraction_matrix(h_moments, max_order):
                         A[row, col] = 0.0
     return A
 
-def vectorized_extract_a_moments(S_samples, h_moments, max_order):
+def extract_a_moments_vectorized(S_samples, h_moments, max_order):
     """
     Vectorized extraction of signal moments from measured moments.
     
@@ -328,7 +349,7 @@ def extract_a_moments_uncertainty_vectorized(S_moments, S_uncertainties, h_momen
                                   size=(num_samples, M, M))
     
     # Vectorized extraction for all samples
-    a_samples = vectorized_extract_a_moments(S_samples, h_moments, max_order)
+    a_samples = extract_a_moments_vectorized(S_samples, h_moments, max_order)
     
     # Compute mean and std deviation over the sample axis
     a_mean = np.mean(a_samples, axis=0)
@@ -407,6 +428,8 @@ def build_density_matrix(signal_moments, N, L_max):
     
       <n|ρ|m> = 1/sqrt(n! m!) * Σ_{l=0}^{L_max} [ (-1)^l / l! * <(a†)^(n+l) a^(m+l)> ]
     
+    Note: The density matrix is not the MLE estimate, but a simple reconstruction
+    based on the measured moments.
     Parameters:
       signal_moments : dict
           Dictionary with keys (n, m) corresponding to <(a†)^n a^m>.
