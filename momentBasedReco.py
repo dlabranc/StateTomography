@@ -258,6 +258,47 @@ def calculate_moments_uncertainty_vectorized(S_measurements, max_order):
     
     return moments, uncertainties
 
+def calculate_cross_moments_uncertainty_vectorized(S1_measurements, S2_measurements, max_order):
+    """
+    Vectorized calculation of moments for 2 channel detection from the given measurements and their standard deviations.
+
+    Parameters:
+      S1_measurements (np.ndarray): Array of S1 measurements (shape: num_samples,).
+      S2_measurements (np.ndarray): Array of S2 measurements (shape: num_samples,).
+      max_order (int): The maximum order of moments to calculate.
+
+    Returns:
+      moments (np.ndarray): Array of moments of shape (max_order+1, max_order+1).
+      uncertainties (np.ndarray): Array of standard deviations for each moment (same shape).
+    """
+    if S1_measurements.shape != S2_measurements.shape:
+        raise ValueError("S1_measurements and S2_measurements must have the same shape")
+    
+    num_samples = S1_measurements.shape[0]
+    M = max_order + 1
+    # Create an array of exponents [0, 1, ..., max_order]
+    exponents = np.arange(M)
+    # Compute S_measurements raised to each power:
+    # X_powers has shape (num_samples, M) where X_powers[i, m] = (S_measurements[i])^m.
+    X_powers = S2_measurements[:, np.newaxis] ** exponents  
+    # Similarly for the complex conjugate.
+    conjX_powers = np.conjugate(S1_measurements)[:, np.newaxis] ** exponents  
+    
+    # For each measurement i, compute the outer product to get the (n,m) moment sample:
+    # moment_samples has shape (num_samples, M, M) with element:
+    # moment_samples[i, n, m] = conjX_powers[i, n] * X_powers[i, m].
+    moment_samples = conjX_powers[:, :, np.newaxis] * X_powers[:, np.newaxis, :]  # shape: (num_samples, M, M)
+    
+    # Compute the mean moments over all measurements:
+    mean_moments = np.mean(moment_samples, axis=0)  # shape: (M, M)
+    # As in the original code, we take the absolute value of the mean moment.
+    moments = np.abs(mean_moments)
+    
+    # Compute the uncertainty (standard deviation) for each moment:
+    # For each (n,m), compute the standard deviation of moment_samples[:, n, m].
+    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))/np.sqrt(num_samples) # shape: (M, M)
+    
+    return moments, uncertainties
 
 
 def build_extraction_matrix(h_moments, max_order):
@@ -387,7 +428,7 @@ def moments_to_density_matrix_ml(measured_moments, uncertainties, N):
     This routine minimizes the weighted squared difference between the measured moments
     and the moments computed from ρ:
     
-        L = - Σₙ,ₘ  (1/δₙ,ₘ²) * | Tr(ρ E_{n,m}) - M_{n,m} |²,
+        L =  Σₙ,ₘ  (1/δₙ,ₘ²) * | Tr(ρ E_{n,m}) - M_{n,m} |²,
     
     where E_{n,m} = (a†)^n a^m and M_{n,m} are the measured moments.
     
