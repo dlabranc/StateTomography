@@ -98,12 +98,12 @@ def calculate_moments_uncertainty(S_measurements, max_order):
             # Store the calculated moment
             moments[n, m] = np.abs(mean_value)
 
-            # Compute the uncertainty (standard deviation) for this moment
+            # Compute the uncertainty (standard deviation) on the mean moment
             uncertainty_sum = 0.0
             for measurement in S_measurements:
                 diff = (np.conjugate(measurement) ** n) * (measurement ** m) - mean_value
                 uncertainty_sum += np.abs(diff)**2
-            uncertainties[n, m] = np.sqrt(uncertainty_sum / num_samples)
+            uncertainties[n, m] = np.sqrt(uncertainty_sum)/num_samples # Because we are calculating the standard deviation of the mean
     print()
     return moments, uncertainties
 
@@ -141,7 +141,7 @@ def calculate_moments_uncertainty_vectorized(S_measurements, max_order):
     
     # Compute the uncertainty (standard deviation) for each moment:
     # For each (n,m), compute the standard deviation of moment_samples[:, n, m].
-    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))
+    uncertainties = np.sqrt(np.mean(np.abs(moment_samples - mean_moments)**2, axis=0))/np.sqrt(num_samples) # shape: (M, M)
     
     return moments, uncertainties
 
@@ -302,7 +302,7 @@ def vectorized_extract_a_moments(S_samples, h_moments, max_order):
     a_samples = a_flat.reshape(num_samples, M, M)
     return a_samples
 
-def extract_a_moments_uncertainty_vectorized(S_moments, S_uncertainties, h_moments, max_order, num_samples=100):
+def extract_a_moments_uncertainty_vectorized(S_moments, S_uncertainties, h_moments, max_order, num_samples=100, return_samples=False):
     """
     Propagate uncertainties from S_moments to extracted signal moments a_moments
     using a fully vectorized Monte Carlo sampling approach with NumPy.
@@ -333,6 +333,8 @@ def extract_a_moments_uncertainty_vectorized(S_moments, S_uncertainties, h_momen
     # Compute mean and std deviation over the sample axis
     a_mean = np.mean(a_samples, axis=0)
     a_std = np.std(a_samples, axis=0)
+    if return_samples:
+        return a_mean, a_std, a_samples
     return a_mean, a_std
 
 def annihilation_operator(N):
